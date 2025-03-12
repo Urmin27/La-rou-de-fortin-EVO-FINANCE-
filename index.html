@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>La Roue de Fortune – Base</title>
+  <style>
+    /* Global Styles */
+    body {
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #f3f3f3, #dfe9f3);
+      margin: 0;
+      padding: 20px;
+    }
+    /* Entête : Solde et Bouton Retrait */
+    #header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      max-width: 900px;
+      margin: 0 auto 20px;
+      flex-wrap: wrap;
+    }
+    #balanceDisplay {
+      font-size: 22px;
+      font-weight: bold;
+      color: #2575fc;
+    }
+    .button {
+      background: linear-gradient(135deg, #6a11cb, #2575fc);
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      margin: 5px;
+      border-radius: 30px;
+      cursor: pointer;
+      font-size: 16px;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+    .button:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 15px rgba(0,0,0,0.2);
+    }
+    .button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    /* La Roue de Fortune */
+    #wheelCanvas {
+      display: block;
+      margin: 0 auto;
+      border: 5px solid #2575fc;
+      border-radius: 50%;
+      background: #fff;
+    }
+    #resultText {
+      text-align: center;
+      font-size: 20px;
+      color: #333;
+      margin-top: 15px;
+    }
+    /* Formulaire de Retrait */
+    #withdrawalFormSection {
+      max-width: 400px;
+      margin: 20px auto;
+      padding: 20px;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+      display: none;
+    }
+    #withdrawalFormSection form {
+      display: flex;
+      flex-direction: column;
+    }
+    #withdrawalFormSection label {
+      margin: 10px 0 5px;
+      font-weight: bold;
+      color: #444;
+    }
+    #withdrawalFormSection input {
+      padding: 10px;
+      margin-bottom: 10px;
+      border: 2px solid #ddd;
+      border-radius: 4px;
+      font-size: 16px;
+      transition: border-color 0.3s ease;
+    }
+    #withdrawalFormSection input:focus {
+      border-color: #6a11cb;
+      outline: none;
+      box-shadow: 0 0 5px rgba(106,17,203,0.5);
+    }
+  </style>
+  <!-- Insertion des SDK Firebase (compat version) -->
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+</head>
+<body>
+  <!-- Entête : Affichage du solde et bouton Retrait -->
+  <div id="header">
+    <div id="balanceDisplay">Solde: <span id="balance">0.00</span>$</div>
+    <button class="button" id="retreatToggleButton">Retrait</button>
+  </div>
+
+  <!-- Section Roue de Fortune -->
+  <h1 style="text-align: center;">La Roue de Fortune</h1>
+  <canvas id="wheelCanvas" width="500" height="500"></canvas>
+  <div style="text-align: center; margin-top: 15px;">
+    <button class="button" id="spinButton">Tourner la roue (une fois par jour)</button>
+  </div>
+  <p id="resultText"></p>
+  <div style="text-align: center;">
+    <button class="button" id="addButton" style="display:none;">Ajouter au solde</button>
+  </div>
+
+  <!-- Formulaire de Retrait -->
+  <div id="withdrawalFormSection">
+    <h2 style="text-align: center;">Retrait</h2>
+    <form id="withdrawalForm">
+      <label for="withdrawAmount">Montant :</label>
+      <input type="number" id="withdrawAmount" step="0.01" min="20" placeholder="Min 20$" required>
+      <label for="withdrawAddress">Adresse du retrait :</label>
+      <input type="text" id="withdrawAddress" placeholder="Votre adresse" required>
+      <button class="button" type="submit">Envoyer la demande</button>
+    </form>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      /************ Initialisation Firebase ************/
+      // Remplacez les valeurs ci-dessous par la configuration de votre projet EVO FINANCE SERVICE
+      const firebaseConfig = {
+        apiKey: "YOUR_API_KEY",
+        authDomain: "your-app.firebaseapp.com",
+        projectId: "your-app",
+        storageBucket: "your-app.appspot.com",
+        messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+        appId: "YOUR_APP_ID"
+      };
+      firebase.initializeApp(firebaseConfig);
+      const db = firebase.firestore();
+
+      /************ Gestion du Solde ************/
+      let balance = 0.00;
+      const balanceDisplay = document.getElementById("balance");
+      function updateBalanceDisplay() {
+        balanceDisplay.innerText = balance.toFixed(2);
+        // Sauvegarde du solde dans Firestore (document "user" dans la collection "users")
+        db.collection("users").doc("user").set({ balance: balance }, { merge: true });
+      }
+      // Chargement du solde depuis Firestore
+      db.collection("users").doc("user").get().then(doc => {
+        if (doc.exists) {
+          balance = doc.data().balance || 0.00;
+          updateBalanceDisplay();
+        }
+      });
+
+      /************ Roue de Fortune ************/
+      let currentWin = 0.00;
+      const dailySpinKey = "lastSpin";
+      const prizes = ["0.008$", "0.05$", "0.01$", "0.1$", "0.009$", "0.0006$", "0.02$", "0.0045$", "0.0098$", "0.3$"];
+      const canvas = document.getElementById("wheelCanvas");
+      const ctx = canvas.getContext("2d");
+      const spinButton = document.getElementById("spinButton");
+      const resultText = document.getElementById("resultText");
+      const addButton = document.getElementById("addButton");
+      const wheelRadius = canvas.width / 2;
+      const numSegments = prizes.length;
+      const segmentAngle = 2 * Math.PI / numSegments;
+      const colors = ["#f44336","#e91e63","#9c27b0","#673ab7","#3f51b5","#2196f3","#03a9f4","#00bcd4","#009688","#4caf50"];
+      let startAngle = 0;
+      let isSpinning = false;
+
+      function drawWheel() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        for (let i = 0; i < numSegments; i++) {
+          const angle = startAngle + i * segmentAngle;
+          ctx.beginPath();
+          ctx.moveTo(wheelRadius, wheelRadius);
+          ctx.arc(wheelRadius, wheelRadius, wheelRadius, angle, angle + segmentAngle);
+          ctx.closePath();
+          ctx.fillStyle = colors[i % colors.length];
+          ctx.fill();
+          ctx.save();
+          ctx.translate(wheelRadius, wheelRadius);
+          ctx.rotate(angle + segmentAngle / 2);
+          ctx.textAlign = "right";
+          ctx.fillStyle = "#fff";
+          ctx.font = "bold 18px Arial";
+          ctx.fillText(prizes[i], wheelRadius - 10, 10);
+          ctx.restore();
+        }
+        // Cercle central
+        ctx.beginPath();
+        ctx.arc(wheelRadius, wheelRadius, 50, 0, 2 * Math.PI);
+        ctx.fillStyle = "#ffffff";
+        ctx.fill();
+        ctx.lineWidth = 5;
+        ctx.strokeStyle = "#2575fc";
+        ctx.stroke();
+      }
+      drawWheel();
+
+      function hasSpunToday() {
+        const lastSpin = localStorage.getItem(dailySpinKey);
+        if (!lastSpin) return false;
+        const lastSpinDate = new Date(parseInt(lastSpin, 10));
+        const today = new Date();
+        return lastSpinDate.getFullYear() === today.getFullYear() &&
+               lastSpinDate.getMonth() === today.getMonth() &&
+               lastSpinDate.getDate() === today.getDate();
+      }
+      function disableSpinIfNeeded() {
+        if (hasSpunToday()) {
+          spinButton.disabled = true;
+          spinButton.innerText = "Vous avez déjà tourné aujourd'hui";
+        }
+      }
+      disableSpinIfNeeded();
+
+      function easeOutCubic(t, b, c, d) {
+        t /= d;
+        t--;
+        return c * (t * t * t + 1) + b;
+      }
+      spinButton.addEventListener("click", function () {
+        if (isSpinning) return;
+        isSpinning = true;
+        localStorage.setItem(dailySpinKey, Date.now());
+        const spins = Math.floor(Math.random() * 3) + 3;
+        const randomSegment = Math.floor(Math.random() * numSegments);
+        const finalAngle = spins * 2 * Math.PI + randomSegment * segmentAngle + segmentAngle / 2;
+        const duration = 5000;
+        const startTime = performance.now();
+        function animateSpin(currentTime) {
+          const elapsed = currentTime - startTime;
+          if (elapsed < duration) {
+            startAngle = easeOutCubic(elapsed, 0, finalAngle, duration);
+            drawWheel();
+            requestAnimationFrame(animateSpin);
+          } else {
+            startAngle = finalAngle;
+            drawWheel();
+            isSpinning = false;
+            spinButton.disabled = true;
+            spinButton.innerText = "Vous avez déjà tourné aujourd'hui";
+            const normalizedAngle = (2 * Math.PI - (startAngle % (2 * Math.PI))) % (2 * Math.PI);
+            const winningIndex = Math.floor(normalizedAngle / segmentAngle);
+            let prizeStr = prizes[winningIndex];
+            // Pour 0.1$ et 0.3$, on force un gain minimum (logique de bonus hebdomadaire)
+            if (prizeStr === "0.1$" || prizeStr === "0.3$") {
+              prizeStr = "0.008$";
+            }
+            currentWin = parseFloat(prizeStr.replace("$", ""));
+            resultText.innerText = "Félicitations ! Vous avez gagné " + prizeStr;
+            addButton.style.display = "inline-block";
+          }
+        }
+        requestAnimationFrame(animateSpin);
+      });
+      addButton.addEventListener("click", function () {
+        balance += currentWin;
+        updateBalanceDisplay();
+        alert("Félicitations ! " + currentWin.toFixed(4) + "$ a été ajouté à votre solde.");
+        addButton.style.display = "none";
+        resultText.innerText = "";
+      });
+
+      /************ Gestion du Formulaire de Retrait ************/
+      const retreatToggleButton = document.getElementById("retreatToggleButton");
+      const withdrawalFormSection = document.getElementById("withdrawalFormSection");
+      retreatToggleButton.addEventListener("click", function () {
+        // On bascule l'affichage du formulaire : s'il est visible, on le cache, sinon on l'affiche
+        if (withdrawalFormSection.style.display === "block") {
+          withdrawalFormSection.style.display = "none";
+        } else {
+          withdrawalFormSection.style.display = "block";
+        }
+      });
+      const withdrawalForm = document.getElementById("withdrawalForm");
+      withdrawalForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        const amount = parseFloat(document.getElementById("withdrawAmount").value);
+        const address = document.getElementById("withdrawAddress").value;
+        if (amount < 20) {
+          alert("Le montant de retrait doit être au moins de 20$.");
+          return;
+        }
+        if (balance < amount) {
+          alert("Solde insuffisant pour ce retrait.");
+          return;
+        }
+        // Envoi de la demande de retrait à Firestore pour vérification (sans déduction immédiate)
+        db.collection("withdrawals").add({
+          amount: amount,
+          address: address,
+          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+          confirmed: false
+        }).then(() => {
+          alert("Demande de retrait envoyée pour vérification.");
+          withdrawalForm.reset();
+          withdrawalFormSection.style.display = "none";
+        }).catch(error => {
+          console.error("Erreur lors de la demande de retrait :", error);
+        });
+      });
+    });
+  </script>
+</body>
+</html>
